@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(playwright:*)",
+      "Bash(pip:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
