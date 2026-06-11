@@ -1,5 +1,5 @@
 """
-Anthropic Claude API client wrapper — handles prompt dispatch, JSON response
+Google Gemini API client wrapper — handles prompt dispatch, JSON response
 parsing, retry logic, and structured output validation via Pydantic.
 """
 
@@ -7,7 +7,8 @@ import json
 import re
 from typing import TypeVar
 
-import anthropic
+from google import genai
+from google.genai import types
 from pydantic import BaseModel
 
 from config import LLM
@@ -17,21 +18,36 @@ logger = get_logger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=LLM.api_key)
+    return _client
+
 
 async def call_claude(
     system_prompt: str,
     user_message: str,
     expect_json: bool = True,
 ) -> dict | str:
-    """Dispatch a prompt to Claude and return the response.
+    """Dispatch a prompt to Gemini and return the response.
 
+    The function name is kept as call_claude so no callers need to change.
     If expect_json=True, parses the response as JSON. On parse failure,
     retries once with an explicit JSON-only instruction appended.
     """
-    client = anthropic.AsyncAnthropic(api_key=LLM.api_key)
+    client = _get_client()
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        temperature=LLM.temperature,
+        max_output_tokens=LLM.max_tokens,
+    )
 
     try:
-        response_text = await _send(client, system_prompt, user_message)
+        response_text = await _send(client, config, user_message)
 
         if not expect_json:
             return response_text
@@ -45,31 +61,29 @@ async def call_claude(
                 + "\n\nYour previous response was not valid JSON. "
                 "Please respond with valid JSON only, no explanation or markdown."
             )
-            retry_text = await _send(client, system_prompt, retry_message)
+            retry_text = await _send(client, config, retry_message)
             return json.loads(_strip_code_fences(retry_text))
 
-    except anthropic.APIError as e:
-        logger.error(f"Claude API error: {e}")
+    except Exception as e:
+        logger.error(f"Gemini API error: {e}")
         raise
 
 
 async def _send(
-    client: anthropic.AsyncAnthropic,
-    system_prompt: str,
+    client: genai.Client,
+    config: types.GenerateContentConfig,
     user_message: str,
 ) -> str:
-    message = await client.messages.create(
+    response = await client.aio.models.generate_content(
         model=LLM.model,
-        max_tokens=LLM.max_tokens,
-        temperature=LLM.temperature,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
+        contents=user_message,
+        config=config,
     )
-    return message.content[0].text
+    return response.text
 
 
 def _strip_code_fences(text: str) -> str:
-    """Remove markdown code fences that Claude sometimes wraps JSON in."""
+    """Remove markdown code fences that the model sometimes wraps JSON in."""
     text = text.strip()
     text = re.sub(r"^```(?:json|python|yaml)?\s*\n?", "", text)
     text = re.sub(r"\n?```\s*$", "", text)

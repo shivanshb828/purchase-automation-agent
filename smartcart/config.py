@@ -25,8 +25,8 @@ class LLMConfig:
 
 
 LLM = LLMConfig(
-    api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-    model="claude-sonnet-4-6",
+    api_key=os.getenv("GEMINI_API_KEY", ""),
+    model="gemini-1.5-flash",
     max_tokens=2048,
     temperature=0.0,
 )
