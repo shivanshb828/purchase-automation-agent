@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+from fake_useragent import UserAgent
 from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 
 load_dotenv()
 
@@ -111,22 +113,37 @@ async def main():
             headless=False,
             args=[
                 "--no-sandbox",
+                "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
-                "--disable-web-security",
+                "--disable-extensions",
+                "--disable-infobars",
             ],
         )
+        session_path = Path("auth/walmart_session.json")
         ctx = await browser.new_context(
             viewport={"width": 1280, "height": 800},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
+            user_agent=UserAgent().random,
+            storage_state=str(session_path) if session_path.exists() else None,
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "DNT": "1",
+                "Connection": "keep-alive",
+            },
         )
-        await ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
+        if session_path.exists():
+            print(f"   🍪  Loaded saved session from {session_path}")
         page = await ctx.new_page()
+        await Stealth(
+            navigator_platform_override="MacIntel",
+            navigator_languages_override=("en-US", "en"),
+            webgl_vendor_override="Intel Inc.",
+            webgl_renderer_override="Intel Iris OpenGL Engine",
+        ).apply_stealth_async(page)
+        await ctx.add_init_script(
+            "Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });"
+        )
         page.set_default_timeout(12_000)
 
         # ── Step 1: Homepage ─────────────────────────────────────────────────
@@ -137,14 +154,24 @@ async def main():
         await asyncio.sleep(1)
         await screenshot(page, "01_homepage")
 
+        # Probe cart icon with multiple candidates; save winner back into results
+        cart_icon_sel, _ = await probe(page, "cart_icon", [
+            '[data-testid="header-cart-btn"]',
+            'a[href="/cart"]',
+            '[aria-label*="cart" i]',
+            '[data-automation-id="header-cart-icon"]',
+        ])
+        results["cart_icon"] = cart_icon_sel is not None
+
         for name, sel in [
             ("search_bar",    'input[name="q"]'),
             ("search_button", 'button[aria-label="Search"]'),
-            ("cart_icon",     '[data-testid="header-cart-btn"]'),
         ]:
             found, cnt = await check(page, name, sel)
             results[name] = found
             ok(name, cnt) if found else fail(name)
+
+        ok("cart_icon", 1) if results["cart_icon"] else fail("cart_icon")
 
         # ── Step 2: Search results (URL navigation — avoids CAPTCHA trigger) ──
         section("Step 2: Search results page (direct URL navigation)")
@@ -243,6 +270,7 @@ async def main():
             ])
             results["product_price"] = price_sel is not None
 
+            # Ratings often use aria-label — check ALL cards, not just first
             rating_sel = await probe_within("product_rating", [
                 '[data-testid="product-ratings"] span[aria-label]',
                 'span[aria-label*="stars"]',
@@ -250,119 +278,205 @@ async def main():
                 '[data-testid="ratings"] span[aria-label]',
                 '[class*="rating"] span[aria-label]',
             ])
+            if not rating_sel:
+                # Search across ALL cards via page-level probe
+                for candidate in ('span[aria-label*="stars"]', 'span[aria-label*="out of 5"]',
+                                  '[class*="rating-stars"] span', '[data-testid*="rating"]'):
+                    try:
+                        cnt = await page.locator(f'[data-item-id] {candidate}').count()
+                        if cnt:
+                            lbl = await page.locator(f'[data-item-id] {candidate}').first.get_attribute("aria-label")
+                            print(f"   🔍  product_rating (all-cards)       winner: {candidate!r}  aria-label={lbl!r}")
+                            rating_sel = candidate
+                            break
+                    except Exception:
+                        pass
             results["product_rating"] = rating_sel is not None
 
             review_sel = await probe_within("product_review_count", [
+                '[data-testid="product-reviews"]',   # confirmed 2026-06 (data-value attr)
                 '[data-testid="product-ratings"] span.f7',
                 '[class*="rating-count"]',
-                'span[class*="review-count"]',
-                'span[class*="f7"]',
             ])
             results["product_review_count"] = review_sel is not None
 
             deal_sel = await probe_within("product_deal_badge", [
+                '[data-testid="badgeTagComponent"]',  # confirmed 2026-06
                 '[data-automation-id="deal-badge"]',
                 '[data-testid="promo-badge"]',
-                '[data-testid="rollback-badge"]',
                 'span[class*="badge"]',
-                '[class*="BadgePill"]',
             ])
+            if not deal_sel:
+                # Check ALL cards — not every product has a badge
+                for candidate in ('[data-testid="badgeTagComponent"]', '[data-testid="promo-badge"]',
+                                  'span[class*="badge"]'):
+                    try:
+                        cnt = await page.locator(f'[data-item-id] {candidate}').count()
+                        if cnt:
+                            txt = await page.locator(f'[data-item-id] {candidate}').first.inner_text(timeout=1_500)
+                            print(f"   🔍  product_deal_badge (all-cards)   winner: {candidate!r}  text={txt.strip()[:30]!r}")
+                            deal_sel = candidate
+                            break
+                    except Exception:
+                        pass
             results["product_deal_badge"] = deal_sel is not None
 
-            # Product link — check attribute not text
-            for link_sel in ('a[link-identifier]', 'a[href*="/ip/"]'):
-                try:
-                    href = await first_card.locator(link_sel).first.get_attribute("href", timeout=2_000)
-                    if href:
-                        print(f"   🔍  {'product_link':<30} winner: {link_sel!r}  href={href[:50]!r}")
-                        results["product_link"] = True
-                        break
-                except Exception:
-                    pass
+            # Product link: use link-identifier attribute (item ID) → build /ip/{id} URL
+            # This avoids click-tracking redirect URLs that trigger PerimeterX
+            ip_url = None
+            item_id = await first_card.locator('a[link-identifier]').first.get_attribute(
+                "link-identifier", timeout=2_000
+            ) if await first_card.locator('a[link-identifier]').count() else None
+            if item_id:
+                ip_url = f"https://www.walmart.com/ip/{item_id}"
+                print(f"   🔍  {'product_link':<30} winner: 'a[link-identifier]'  item_id={item_id!r}  url={ip_url!r}")
+                results["product_link"] = True
             else:
                 fail("product_link")
                 results["product_link"] = False
 
-        # ── Step 3: Product detail page ──────────────────────────────────────
-        section("Step 3: Product detail page")
-        # Get a real product URL from the results
-        product_url = None
-        for link_sel in ('a[link-identifier]', 'a[href*="/ip/"]'):
+            # Also dump first card HTML for offline analysis
             try:
-                cards = await page.locator(card_sel or '[data-item-id]').all() if card_sel else []
-                if cards:
-                    href = await cards[0].locator(link_sel).first.get_attribute("href", timeout=2_000)
-                    if href:
-                        product_url = href if href.startswith("http") else "https://www.walmart.com" + href
-                        break
+                card_html = await first_card.inner_html(timeout=5_000)
+                Path("screenshots/card_html.html").write_text(card_html)
+                print(f"   💾  Card HTML → screenshots/card_html.html ({len(card_html)} chars)")
             except Exception:
                 pass
+
+        # ── Step 3: Product detail page (try, but PerimeterX often blocks) ────
+        section("Step 3: Product detail page (best effort)")
+        product_url = ip_url if "ip_url" in dir() else None
+        detail_ok = False
 
         if product_url:
             print(f"   ↗   Navigating to: {product_url[:80]}")
             await page.goto(product_url, wait_until="domcontentloaded")
             await asyncio.sleep(3)
             await dismiss_popups(page)
-        else:
-            print("   ⚠️   No product URL found — cannot verify detail selectors")
+            if await is_blocked(page):
+                print("   ⛔  PerimeterX blocked detail page — probing from search results instead")
+            else:
+                detail_ok = True
 
         await screenshot(page, "03_product_detail")
 
         section("  Probing detail page selectors")
-        for name, candidates in [
-            ("detail_title", [
-                'h1[itemprop="name"]',
-                'h1[class*="ProductTitle"]',
-                '[data-automation-id="product-title"]',
-                'h1',
-            ]),
-            ("detail_add_to_cart", [
-                '[data-testid="add-to-cart-button"]',
-                'button[data-automation-id="add-to-cart"]',
-                'button:has-text("Add to cart")',
-                'button[aria-label*="add to cart" i]',
-            ]),
-            ("quantity_increment", [
-                '[data-testid="quantity-increment"]',
-                'button[aria-label="Increase quantity"]',
-                'button[aria-label*="increment" i]',
-                'button[class*="quantity-increment"]',
-            ]),
-        ]:
-            sel, cnt = await probe(page, name, candidates)
-            results[name] = sel is not None
+        if detail_ok:
+            for name, candidates in [
+                ("detail_title", [
+                    'h1[itemprop="name"]', 'h1[class*="ProductTitle"]',
+                    '[data-automation-id="product-title"]', 'h1',
+                ]),
+                ("detail_add_to_cart", [
+                    '[data-testid="add-to-cart-button"]',
+                    'button[data-automation-id="add-to-cart"]',
+                    'button:has-text("Add to cart")',
+                    'button[aria-label*="Add to cart" i]',
+                    '[data-testid*="add-to-cart"]',
+                ]),
+                ("quantity_increment", [
+                    '[data-testid="quantity-increment"]',
+                    'button[aria-label="Increase quantity"]',
+                    'button[aria-label*="increment" i]',
+                    'button[aria-label*="Increase" i]',
+                    '[data-automation-id="quantity-plus"]',
+                ]),
+            ]:
+                sel, cnt = await probe(page, name, candidates)
+                results[name] = sel is not None
+            # Dump data-testids for later analysis
+            try:
+                testids = await page.evaluate(
+                    "() => [...new Set([...document.querySelectorAll('[data-testid]')]"
+                    ".map(e=>e.getAttribute('data-testid')))].sort()"
+                )
+                Path("screenshots/detail_testids.txt").write_text("\n".join(testids))
+                print(f"   💾  Detail testids → screenshots/detail_testids.txt")
+            except Exception:
+                pass
+        else:
+            print("   ⚠️   Detail page blocked — using card-level ATC to reach cart")
+            # Go back to search results to use the card-level Add button
+            await page.goto("https://www.walmart.com/search?q=paper+towels",
+                            wait_until="domcontentloaded")
+            await asyncio.sleep(4)
+            await dismiss_popups(page)
 
         # ── Step 4: Add to cart ───────────────────────────────────────────────
         section("Step 4: Add to cart")
-        atc_found = results.get("detail_add_to_cart", False)
-        if atc_found:
-            for atc_sel in [
-                '[data-testid="add-to-cart-button"]',
-                'button:has-text("Add to cart")',
-            ]:
+        added = False
+
+        if detail_ok:
+            # Try detail page ATC button
+            for atc_sel in ['[data-testid="add-to-cart-button"]', 'button:has-text("Add to cart")',
+                            'button[data-automation-id="add-to-cart"]']:
                 try:
-                    count = await page.locator(atc_sel).count()
-                    if count:
+                    if await page.locator(atc_sel).count():
                         await page.locator(atc_sel).first.click(timeout=8_000)
-                        print("   🛒  Clicked Add to Cart")
+                        print(f"   🛒  Clicked detail ATC via {atc_sel!r}")
                         await asyncio.sleep(3)
                         await dismiss_popups(page)
+                        added = True
                         break
                 except Exception as e:
-                    print(f"   ⚠️   ATC click failed with {atc_sel!r}: {e}")
+                    print(f"   ⚠️   ATC click failed: {e}")
+        else:
+            # Use card-level "Add" button on search results — confirmed selector
+            card_atc_sel = 'button[data-automation-id="add-to-cart"]'
+            try:
+                cnt = await page.locator(card_atc_sel).count()
+                print(f"   🔍  card-level ATC buttons found: {cnt}")
+                results["card_add_to_cart"] = cnt > 0
+                if cnt:
+                    await page.locator(card_atc_sel).first.click(timeout=8_000)
+                    print(f"   🛒  Clicked card-level ATC ({cnt} available)")
+                    await asyncio.sleep(3)
+                    await dismiss_popups(page)
+                    added = True
+            except Exception as e:
+                print(f"   ⚠️   Card ATC click failed: {e}")
         await screenshot(page, "04_add_to_cart")
 
         # ── Step 5: Cart ──────────────────────────────────────────────────────
         section("Step 5: Cart page")
-        cart_icon_found = results.get("cart_icon", False)
-        if cart_icon_found:
+        # Navigate to cart — either via icon click or direct URL
+        cart_navigated = False
+        if added:
             try:
-                await page.locator('[data-testid="header-cart-btn"]').first.click(timeout=8_000)
+                for cart_nav_sel in ('[aria-label*="cart" i]', 'a[href="/cart"]'):
+                    try:
+                        cnt = await page.locator(cart_nav_sel).count()
+                        if cnt:
+                            await page.locator(cart_nav_sel).first.click(timeout=8_000)
+                            print(f"   🛒  Navigated to cart via {cart_nav_sel!r}")
+                            await asyncio.sleep(3)
+                            await dismiss_popups(page)
+                            cart_navigated = True
+                            break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            if not cart_navigated:
+                # Direct URL fallback
+                await page.goto("https://www.walmart.com/cart", wait_until="domcontentloaded")
                 await asyncio.sleep(3)
-                await dismiss_popups(page)
-            except Exception as e:
-                print(f"   ⚠️   Cart click failed: {e}")
+                cart_navigated = True
+                print("   🛒  Navigated to cart via direct URL")
+
         await screenshot(page, "05_cart")
+
+        # Dump cart page data-testids for analysis
+        if cart_navigated:
+            try:
+                cart_testids = await page.evaluate(
+                    "() => [...new Set([...document.querySelectorAll('[data-testid]')]"
+                    ".map(e=>e.getAttribute('data-testid')))].sort()"
+                )
+                Path("screenshots/cart_testids.txt").write_text("\n".join(cart_testids))
+                print(f"   💾  Cart testids → screenshots/cart_testids.txt ({len(cart_testids)} values)")
+            except Exception:
+                pass
 
         section("  Probing cart selectors")
         for name, candidates in [
@@ -370,17 +484,20 @@ async def main():
                 '[data-testid="cart-items-list"]',
                 '[data-automation-id="cart-items"]',
                 '[data-testid="cart-item-stack"]',
+                '[data-testid="cart-items"]',
                 '[class*="CartList"]',
             ]),
             ("cart_subtotal", [
                 '[data-testid="subtotal"]',
                 '[data-automation-id="subtotal"]',
-                'span:has-text("Subtotal")',
+                '[data-testid="cart-summary-subtotal"]',
+                'span[data-testid*="subtotal"]',
             ]),
             ("cart_total", [
                 '[data-testid="cart-total"]',
                 '[data-automation-id="estimated-total"]',
-                'span:has-text("Estimated total")',
+                '[data-testid="cart-summary-total"]',
+                'span[data-testid*="total"]',
             ]),
             ("promo_code_input", [
                 '#promo-code-input',
@@ -388,6 +505,7 @@ async def main():
                 'input[placeholder*="promo" i]',
                 'input[placeholder*="coupon" i]',
                 'input[aria-label*="promo" i]',
+                'input[aria-label*="coupon" i]',
             ]),
         ]:
             sel, cnt = await probe(page, name, candidates)

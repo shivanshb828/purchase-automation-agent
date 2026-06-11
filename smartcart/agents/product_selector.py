@@ -172,32 +172,32 @@ class ProductSelector:
             unit_price_text = await self._try_text(card, self._sel["product_unit_price"])
             unit_price = _parse_price(unit_price_text) if unit_price_text else None
 
-            rating_label = await self._try_attr(
-                card, self._sel["product_rating"], "aria-label"
+            # Rating: screen-reader span that follows the stars container
+            rating_text = await self._try_text(card, self._sel["product_rating"])
+            rating = _parse_rating(rating_text) if rating_text else None
+
+            # Review count: data-value attribute is the clean integer, text is fallback
+            review_count_attr = await self._try_attr(
+                card, self._sel["product_review_count"], "data-value"
             )
-            rating = _parse_rating(rating_label) if rating_label else None
+            if review_count_attr:
+                review_count = _parse_int(review_count_attr)
+            else:
+                review_text = await self._try_text(card, self._sel["product_review_count"])
+                review_count = _parse_int(review_text) if review_text else None
 
-            review_text = await self._try_text(card, self._sel["product_review_count"])
-            review_count = _parse_int(review_text) if review_text else None
-
-            deal_badge = await self._try_text(card, '[data-automation-id="deal-badge"]')
-            if not deal_badge:
-                deal_badge = await self._try_text(card, '[data-testid="promo-badge"]')
-            if not deal_badge:
-                # Broader fallback: any element with "badge" in its automation id
-                deal_badge = await self._try_text(card, '[data-automation-id*="badge"]')
+            deal_badge = await self._try_text(card, self._sel["product_deal_badge"])
 
             oos = await self._try_text(card, self._sel["product_out_of_stock"])
             in_stock = oos is None
 
-            href = await self._try_attr(card, self._sel["product_link"], "href")
-            if not href:
-                href = await self._try_attr(card, 'a[href*="/ip/"]', "href")
-            product_url = (
-                href
-                if (href and href.startswith("http"))
-                else (WALMART.base_url + href if href else WALMART.base_url)
-            )
+            # Product URL: extract numeric item ID from link-identifier attr and build
+            # a direct /ip/{id} URL — avoids PerimeterX-triggering tracking redirects.
+            item_id = await self._try_attr(card, self._sel["product_link"], "link-identifier")
+            if item_id:
+                product_url = f"{WALMART.base_url}/ip/{item_id}"
+            else:
+                product_url = WALMART.base_url
 
             return ScrapedProduct(
                 product_name=name.strip(),

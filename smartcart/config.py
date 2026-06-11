@@ -110,16 +110,17 @@ _WALMART_SELECTORS: dict[str, str] = {
     "product_price":          '[data-automation-id="product-price"]',
     # Unit price (e.g. "$0.08/sq ft") — not always present
     "product_unit_price":     '[data-automation-id="unit-price"]',
-    # Rating: aria-label carries "4.7 out of 5 stars" — unverified, best guess
-    "product_rating":         'span[aria-label*="stars"], span[aria-label*="out of 5"]',
-    # Review count — unverified; f7 Tachyons class also matches badges, use more specific path
-    "product_review_count":   '[data-testid="product-ratings"] span[class*="f7"]',
-    # Deal / promo badge (e.g. "Rollback", "BOGO") — unverified
-    "product_deal_badge":     '[data-automation-id="deal-badge"], [data-testid="promo-badge"]',
+    # Rating: accessibility span after the review count span (verified 2026-06)
+    # Contains text like "4.7 out of 5 Stars. 81274 reviews"
+    "product_rating":         '[data-testid="product-reviews"] + span',
+    # Review count — data-testid="product-reviews" with data-value attribute (verified 2026-06)
+    "product_review_count":   '[data-testid="product-reviews"]',
+    # Deal / promo badge e.g. "Rollback" — data-testid confirmed live 2026-06
+    "product_deal_badge":     '[data-testid="badgeTagComponent"]',
     # Out-of-stock indicator — unverified
     "product_out_of_stock":   '[data-automation-id="out-of-stock-badge"]',
-    # Direct /ip/ link within card — avoids click-tracking redirect URLs
-    "product_link":           'a[href*="/ip/"]',
+    # Product link: link-identifier attribute = numeric item ID. Construct /ip/{id} URL in code.
+    "product_link":           'a[link-identifier]',
 
     # ---- Product detail page ----
     # h1 confirmed live 2026-06; add-to-cart unverified — best guess
