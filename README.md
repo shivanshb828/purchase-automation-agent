@@ -3,7 +3,7 @@
 > AI procurement agent that automates recurring supply orders for small businesses.
 
 Built at the **Build with Cursor hackathon** — a16z SF, June 2026.  
-Team: Dhruva · Shivanch · Ayush
+Team: Dhruva · Shivansh · Aayush
 
 ---
 
