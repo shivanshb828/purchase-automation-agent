@@ -101,39 +101,43 @@ _WALMART_SELECTORS: dict[str, str] = {
     "search_button":          'button[aria-label="Search"]',
 
     # ---- Search results page ----
-    # Container holding all product cards on the results page
-    "product_cards_container": '[data-testid="search-result-listview"]',
-    # Each individual product card within the results list
+    # Verified live 2026-06: item-stack is the actual container; search-result-listview not present
+    "product_cards_container": '[data-testid="item-stack"]',
+    # Verified live 2026-06: [data-item-id] finds all product cards (65+ on a results page)
     "product_card":           '[data-item-id]',
-    # Within a card:
+    # Within a card — both verified live 2026-06 with real product text
     "product_title":          '[data-automation-id="product-title"]',
     "product_price":          '[data-automation-id="product-price"]',
     # Unit price (e.g. "$0.08/sq ft") — not always present
     "product_unit_price":     '[data-automation-id="unit-price"]',
-    "product_rating":         '[data-testid="product-ratings"] span[aria-label]',
-    "product_review_count":   '[data-testid="product-ratings"] span.f7',
-    # Deal / promo badge (e.g. "Rollback", "BOGO", "Save 20%")
+    # Rating: aria-label carries "4.7 out of 5 stars" — unverified, best guess
+    "product_rating":         'span[aria-label*="stars"], span[aria-label*="out of 5"]',
+    # Review count — unverified; f7 Tachyons class also matches badges, use more specific path
+    "product_review_count":   '[data-testid="product-ratings"] span[class*="f7"]',
+    # Deal / promo badge (e.g. "Rollback", "BOGO") — unverified
     "product_deal_badge":     '[data-automation-id="deal-badge"], [data-testid="promo-badge"]',
-    # Out-of-stock indicator
+    # Out-of-stock indicator — unverified
     "product_out_of_stock":   '[data-automation-id="out-of-stock-badge"]',
-    # Link wrapping the card — used to extract product_url
-    "product_link":           'a[link-identifier]',
+    # Direct /ip/ link within card — avoids click-tracking redirect URLs
+    "product_link":           'a[href*="/ip/"]',
 
     # ---- Product detail page ----
-    "detail_title":           'h1[itemprop="name"]',
+    # h1 confirmed live 2026-06; add-to-cart unverified — best guess
+    "detail_title":           'h1',
     "detail_price":           '[data-automation-id="product-price"] span.f3',
     "detail_add_to_cart":     '[data-testid="add-to-cart-button"]',
-    # Quantity selector on the detail page
+    # Quantity selector on the detail page — unverified
     "quantity_input":         'input[data-testid="quantity-input"]',
     "quantity_increment":     '[data-testid="quantity-increment"]',
     "quantity_decrement":     '[data-testid="quantity-decrement"]',
-    # Post-add-to-cart confirmation toast / modal
+    # Post-add-to-cart confirmation toast / modal — unverified
     "atc_confirmation":       '[data-testid="add-to-cart-confirmation"]',
-    # "Continue" or "No thanks" on the upsell/protection-plan popup
+    # "Continue" or "No thanks" on the upsell/protection-plan popup — unverified
     "upsell_dismiss":         '[data-testid="upsell-cancel-button"], button[aria-label="No, thanks"]',
 
     # ---- Cart / Checkout ----
-    "cart_icon":              '[data-testid="header-cart-btn"]',
+    # cart_icon: header-cart-btn not found live; a[href="/cart"] is the fallback
+    "cart_icon":              'a[href="/cart"]',
     "cart_items_list":        '[data-testid="cart-items-list"]',
     "cart_item_name":         '[data-automation-id="cart-item-title"]',
     "cart_item_price":        '[data-automation-id="cart-item-price"]',
@@ -147,7 +151,7 @@ _WALMART_SELECTORS: dict[str, str] = {
     "promo_success_badge":    '[data-testid="promo-success"]',
     "promo_error_message":    '[data-testid="promo-error"]',
 
-    # ---- Common popups / overlays ----
+    # ---- Common popups / overlays (including PerimeterX bot challenge) ----
     "cookie_banner_accept":   '[data-testid="cookie-accept-button"]',
     "location_popup_close":   '[data-testid="postal-code-modal"] button[aria-label="Close"]',
     "modal_close_generic":    'button[aria-label="Close"], button[data-testid="close-modal"]',
