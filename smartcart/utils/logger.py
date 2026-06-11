@@ -6,12 +6,12 @@ that doubles as the visual narration layer during the live demo.
 
 import logging
 from rich.logging import RichHandler
-from config import LOG_LEVEL
+from config import APP
 
 
 def get_logger(name: str) -> logging.Logger:
     logging.basicConfig(
-        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        level=getattr(logging, APP.log_level, logging.INFO),
         format="%(message)s",
         datefmt="[%X]",
         handlers=[RichHandler(rich_tracebacks=True)],
