@@ -26,7 +26,7 @@ class LLMConfig:
 
 LLM = LLMConfig(
     api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     max_tokens=2048,
     temperature=0.0,
 )
